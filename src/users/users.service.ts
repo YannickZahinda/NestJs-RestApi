@@ -8,13 +8,18 @@ import { RabbitmqService } from 'src/rabbitmq/rabbitmq.service';
 import axios from 'axios';
 import * as crypto from 'crypto';
 import { Avatar, AvatarDocument } from './dto/avatar.schema';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+  private readonly externalApiUrl: string;
+
   constructor(@InjectModel(User.name) private userModel: Model<UserDocument>,
   @InjectModel(Avatar.name) private avatarModel: Model<AvatarDocument>,
-  private rabbitmqService: RabbitmqService) {}
+  private rabbitmqService: RabbitmqService, private configService: ConfigService) {
+    this.externalApiUrl = this.configService.get<string>('EXTERNAL_API_URL');
+  }
 
   async create(createUserDto: CreateUserDto): Promise< User> {
     const createdUser = new this.userModel(createUserDto);
@@ -56,11 +61,6 @@ export class UsersService {
     await newAvatar.save();
 
     return base64;
-    // const user = await this.userModel.findById(id).select('avatar').exec();
-    // if (!user || !user.avatar) {
-    //    throw new NotFoundException('Avatar not found');
-    // }
-    // return user.avatar
   }
 
   async getUserFromExternalApi(userId: string): Promise <any> {
@@ -70,7 +70,7 @@ export class UsersService {
         const idToUse = !isNaN(numericUserId) ? numericUserId : userId;
 
         this.logger.log(`Fetching user data for userId: ${idToUse}`);
-        const response = await axios.get(`https://reqres.in/api/users/${idToUse}`);
+        const response = await axios.get(`${this.externalApiUrl}/${idToUse}`);
         this.logger.log(`Successfully fetched user data for userId: ${idToUse}`);
         return response.data.data
     } catch (error) {
