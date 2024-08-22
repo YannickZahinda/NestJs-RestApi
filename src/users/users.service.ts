@@ -4,14 +4,20 @@ import { Model } from 'mongoose';
 import { User, UserDocument } from './dto/user.schema';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user-dto';
+import { RabbitmqService } from 'src/rabbitmq/rabbitmq.service';
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<UserDocument>) {}
+  constructor(@InjectModel(User.name) private userModel: Model<UserDocument>,
+  private rabbitmqService: RabbitmqService) {}
 
-  async create(createUserDto: CreateUserDto): Promise<User> {
+  async create(createUserDto: CreateUserDto): Promise< User> {
     const createdUser = new this.userModel(createUserDto);
-    return createdUser.save();
+    const savedUser = await createdUser.save();
+
+    await this.rabbitmqService.sendEvent('User was created successfully', savedUser)
+
+    return savedUser;
   }
 
   async findAll(): Promise<User[]> {
@@ -24,6 +30,14 @@ export class UsersService {
       throw new NotFoundException('User not Found');
     }
     return user;
+  }
+
+  async getAvatar(id: string): Promise <string> {
+    const user = await this.userModel.findById(id).select('avatar').exec();
+    if (!user || !user.avatar) {
+       throw new NotFoundException('Avatar not found');
+    }
+    return user.avatar
   }
 
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {

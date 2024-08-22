@@ -12,6 +12,18 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
+  // @Get(':id/avatar')
+  // getAvatar(@Param('id') id: string) {
+  //   const avatar = this.usersService.getAvatar(id)
+  //   return { avatar }
+  // }
+
+  @Get(':id/avatar')
+  async getAvatar(@Param('id') id: string): Promise<{ avatar: string }> {
+    const avatar = await this.usersService.getAvatar(id);
+    return { avatar };
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.usersService.findOne(id);
