@@ -1,12 +1,12 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Injectable } from '@nestjs/common';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
 
 @Injectable()
-export class DatabaseService extends PrismaClient implements 
-OnModuleInit {
-    async onModuleInit(){
-        await this.$connect()
-    }
+export class DatabaseService {
+  constructor(@InjectConnection() private readonly connection: Connection) {}
+
+  getDbHandle(): Connection {
+    return this.connection;
+  }
 }
-
-

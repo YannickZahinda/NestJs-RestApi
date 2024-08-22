@@ -1,92 +1,100 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User, UserDocument } from './dto/user.schema';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user-dto';
-import { NotFoundException } from '@nestjs/common';
+import { RabbitmqService } from 'src/rabbitmq/rabbitmq.service';
+import axios from 'axios';
+import * as crypto from 'crypto';
+import { Avatar, AvatarDocument } from './dto/avatar.schema';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UsersService {
-    private users = [
-        {
-            "id": 1,
-            "name":"Yannick Zahinda",
-            "email":"ymulikuza@gmail.com",
-            "role":"ADMIN"
-        },
-        {
-            "id": 2,
-            "name":"Naruto Uzumaki",
-            "email":"naruzum@gmail.com",
-            "role":"INTERNN"
-        },
-        {
-            "id": 3,
-            "name":"Sakura Aruna",
-            "email":"sakuraa@gmail.com",
-            "role":"ENGINEER"
-        },
-        {
-            "id": 4,
-            "name":"Yann Otaku",
-            "email":"otaku@gmail.com",
-            "role":"ADMIN"
-        },
-        {
-            "id": 5,
-            "name":"Sasuke Uchiha",
-            "email":"sasuke@gmail.com",
-            "role":"INTERN"
-        },
-    ]
+  private readonly logger = new Logger(UsersService.name);
+  private readonly externalApiUrl: string;
 
-    findAll(role?: 'INTERN' | 'ENGINEER' | 'ADMIN'){
-        
-        if (role){
-            const rolesArray = this.users.filter(user => user.role === role)
-            if (rolesArray.length === 0) throw new 
-            NotFoundException('User Role not found')
-            return rolesArray
-        
-        } 
-        return this.users
+  constructor(@InjectModel(User.name) private userModel: Model<UserDocument>,
+  @InjectModel(Avatar.name) private avatarModel: Model<AvatarDocument>,
+  private rabbitmqService: RabbitmqService, private configService: ConfigService) {
+    this.externalApiUrl = this.configService.get<string>('EXTERNAL_API_URL');
+  }
+
+  async create(createUserDto: CreateUserDto): Promise< User> {
+    const createdUser = new this.userModel(createUserDto);
+    const savedUser = await createdUser.save();
+
+    await this.rabbitmqService.sendEvent('User was created successfully', savedUser)
+
+    return savedUser;
+  }
+
+  async findAll(): Promise<User[]> {
+    return this.userModel.find().exec();
+  }
+
+  async findOne(id: string): Promise<User> {
+    const user = await this.userModel.findById(id).exec();
+    if (!user) {
+      throw new NotFoundException('User not Found');
+    }
+    return user;
+  }
+
+  async getAvatar(id: string): Promise <string> {
+    const existingAvatar = await this.avatarModel.findOne({id}).exec();
+    if (existingAvatar) {
+        return existingAvatar.base64;
     }
 
-    findOne(id: number) {
-        const user = this.users.find(user => user.id === id)
+    const userData = await this.getUserFromExternalApi(id);
+    const avatarUrl = userData.avatar;
 
-        if (!user) throw new NotFoundException('User not Found')
-        return user
-    }
+    const response = await axios.get(avatarUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data, 'binary');
 
-    create(createUserDto: CreateUserDto) {
-        const usersByHighestId = [...this.users].sort((a,b) => b.id - a.id)
+    const hash = crypto.createHash('md5').update(buffer).digest('hex');
+    const base64 = buffer.toString('base64');
 
-        const newUser = {
-            id: usersByHighestId[0].id + 1,
-            ...createUserDto
+    const newAvatar = new this.avatarModel({id, hash, base64});
+    await newAvatar.save();
+
+    return base64;
+  }
+
+  async getUserFromExternalApi(userId: string): Promise <any> {
+    try {
+        const numericUserId = parseInt(userId, 10)
+
+        const idToUse = !isNaN(numericUserId) ? numericUserId : userId;
+
+        this.logger.log(`Fetching user data for userId: ${idToUse}`);
+        const response = await axios.get(`${this.externalApiUrl}/${idToUse}`);
+        this.logger.log(`Successfully fetched user data for userId: ${idToUse}`);
+        return response.data.data
+    } catch (error) {
+        this.logger.error(`Error fetching user data for userId: ${userId}`, error.stack);
+        if (axios.isAxiosError(error) && error.response.status === 404) {
+            throw new NotFoundException ('The User was not found in the external API');
         }
-
-        this.users.push(newUser)
-        return newUser
+        throw new InternalServerErrorException(`Failed to fetch user data for userId: ${userId}`);
     }
+  }
 
-    update(id: number, updatedUserDto: UpdateUserDto){
-        this.users = this.users.map(user => {
-            if (user.id === id) {
-                return {...user, ...updatedUserDto}
-            }
-
-            return user
-        })
-
-        return this.findOne(id)
-
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+    const updatedUser = await this.userModel.findByIdAndUpdate(id, updateUserDto, { new: true }).exec();
+    if (!updatedUser) {
+      throw new NotFoundException('User not Found');
     }
+    return updatedUser;
+  }
 
-    delete(id: number) {
-        const removedUser = this.findOne(id)
-
-        this.users = this.users.filter(user => user.id != id)
-
-        return removedUser
+  async remove(id: string): Promise<User> {
+    const deletedUser = await this.userModel.findByIdAndDelete(id).exec();
+    if (!deletedUser) {
+      throw new NotFoundException('User not Found');
     }
+    return deletedUser;
+  }
 }
